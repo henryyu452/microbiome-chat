@@ -287,28 +287,36 @@ def _serialize_for_llm(obj):
     return json.dumps(obj, default=str)
 
 
-def run_agent(client, system_prompt, history, user_message, tool_log):
+def run_agent(client, system_prompt, history, user_message, tool_log,
+              status_widget=None, answer_slot=None):
     """
-    Run a tool-use loop until Claude produces a final text answer.
-    Mutates `tool_log` with each (query, result) pair so the UI can show them.
-    Returns the final assistant text.
+    Run a tool-use loop until Claude produces a final text answer, with
+    streaming. SQL queries are appended live to `status_widget` (st.status)
+    and the final answer streams into `answer_slot` (st.empty) as it's
+    generated. Both kwargs are optional; without them this falls back to
+    silent operation.
     """
     messages = list(history) + [{"role": "user", "content": user_message}]
 
-    for _ in range(MAX_TURNS):
-        response = client.messages.create(
+    for turn_i in range(MAX_TURNS):
+        accumulated = ""
+        with client.messages.stream(
             model=MODEL,
             max_tokens=4096,
             system=system_prompt,
             tools=TOOLS,
             messages=messages,
-        )
+        ) as stream:
+            for text in stream.text_stream:
+                accumulated += text
+                if answer_slot is not None:
+                    answer_slot.markdown(accumulated + " ▌")
+            response = stream.get_final_message()
 
         if response.stop_reason == "end_turn":
-            text = "\n\n".join(
-                b.text for b in response.content if getattr(b, "type", None) == "text"
-            )
-            return text or "(no response)"
+            if answer_slot is not None:
+                answer_slot.markdown(accumulated)
+            return accumulated or "(no response)"
 
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": response.content})
@@ -316,18 +324,31 @@ def run_agent(client, system_prompt, history, user_message, tool_log):
             for block in response.content:
                 if getattr(block, "type", None) != "tool_use":
                     continue
+                if status_widget is not None:
+                    status_widget.update(label=f"Running query {len(tool_log) + 1}...")
                 result = execute_tool(block.name, block.input)
                 tool_log.append({
                     "tool": block.name,
                     "input": block.input,
                     "result": result,
                 })
+                if status_widget is not None:
+                    with status_widget:
+                        st.code((block.input.get("query") or "")[:600], language="sql")
+                        if "error" in result:
+                            st.error(result["error"])
+                        else:
+                            st.caption(f"✓ {result['row_count']} row(s)")
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
                     "content": _serialize_for_llm(result),
                 })
             messages.append({"role": "user", "content": tool_results})
+            if answer_slot is not None:
+                answer_slot.empty()
+            if status_widget is not None:
+                status_widget.update(label="Writing answer...")
             continue
 
         return f"(unexpected stop_reason: {response.stop_reason})"
@@ -425,16 +446,23 @@ if prompt := st.chat_input("Ask about the microbiome data..."):
             history.append({"role": m["role"], "content": m["content"]})
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            tool_log = []
-            try:
-                system_prompt = build_system_prompt()
-                answer = run_agent(client, system_prompt, history, prompt, tool_log)
-            except Exception as e:
-                answer = f"Error: {e}"
-        st.markdown(answer)
+        status_widget = st.status("Thinking...", expanded=True)
+        answer_slot = st.empty()
+        tool_log = []
+        try:
+            system_prompt = build_system_prompt()
+            answer = run_agent(
+                client, system_prompt, history, prompt, tool_log,
+                status_widget=status_widget, answer_slot=answer_slot,
+            )
+            status_widget.update(label="Done", state="complete", expanded=False)
+        except Exception as e:
+            answer = f"Error: {e}"
+            answer_slot.markdown(answer)
+            status_widget.update(label="Failed", state="error", expanded=True)
+
         if tool_log:
-            with st.expander(f"queries ({len(tool_log)})", expanded=False):
+            with st.expander(f"queries ({len(tool_log)}) — full results", expanded=False):
                 for i, t in enumerate(tool_log, 1):
                     st.markdown(f"**Query {i}**")
                     st.code(t["input"].get("query", ""), language="sql")
