@@ -1,11 +1,11 @@
 """
-app.py - Streamlit chat app for the microbiome modifier database.
+app.py - HappyBiome AI chat app over the microbiome modifier database.
 
 Run locally:
     streamlit run app.py
 
-Reads SUPABASE_DB_URL and ANTHROPIC_API_KEY from .env (local) or
-st.secrets (Streamlit Cloud).
+Reads SUPABASE_DB_URL, ANTHROPIC_API_KEY, and (optional) APP_PASSWORD from
+.env (local) or st.secrets (Streamlit Cloud).
 """
 
 import json
@@ -82,7 +82,6 @@ def db_connect():
 
 
 def run_select(query, params=None):
-    """Run a SELECT and return a list of dicts. Caller is responsible for safety."""
     with db_connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params or ())
@@ -90,7 +89,7 @@ def run_select(query, params=None):
 
 
 # --------------------------------------------------------------------
-# Schema context (built dynamically from the DB so the LLM sees real data)
+# Schema context
 # --------------------------------------------------------------------
 
 STATIC_SCHEMA = """\
@@ -184,7 +183,6 @@ WHEN ANSWERING
 
 @st.cache_data(ttl=600)
 def fetch_dynamic_schema():
-    """Pull a few small lookups from the DB so the LLM knows what's loaded."""
     out = {}
     out["compounds"] = run_select(
         "SELECT modifier, display_name FROM modifiers ORDER BY display_name"
@@ -208,7 +206,7 @@ def build_system_prompt():
     study_types = ", ".join(t["study_type"] for t in dyn["study_types"]) or "(none)"
     tiers = ", ".join(t["evidence_tier"] for t in dyn["evidence_tiers"]) or "(none)"
 
-    return f"""You are a research assistant for a microbiome modifier evidence database.
+    return f"""You are HappyBiome AI, a research assistant for a microbiome modifier evidence database.
 Each "modifier" is a compound (food, supplement, herb, drug) that has been
 scored against a fixed list of gut bacterial taxa using published studies.
 
@@ -279,23 +277,15 @@ def execute_tool(name, args):
 
 
 # --------------------------------------------------------------------
-# Chat agent loop
+# Agent loop
 # --------------------------------------------------------------------
 
 def _serialize_for_llm(obj):
-    """JSON-friendly serializer that handles dates, decimals, etc."""
     return json.dumps(obj, default=str)
 
 
 def run_agent(client, system_prompt, history, user_message, tool_log,
               status_widget=None, answer_slot=None):
-    """
-    Run a tool-use loop until Claude produces a final text answer, with
-    streaming. SQL queries are appended live to `status_widget` (st.status)
-    and the final answer streams into `answer_slot` (st.empty) as it's
-    generated. Both kwargs are optional; without them this falls back to
-    silent operation.
-    """
     messages = list(history) + [{"role": "user", "content": user_message}]
 
     for turn_i in range(MAX_TURNS):
@@ -360,12 +350,18 @@ def run_agent(client, system_prompt, history, user_message, tool_log,
 # Streamlit UI
 # --------------------------------------------------------------------
 
-st.set_page_config(page_title="Microbiome modifier chat", layout="wide")
-st.title("Microbiome modifier chat")
+st.set_page_config(
+    page_title="HappyBiome AI",
+    page_icon="🦠",
+    layout="wide",
+)
+st.title("🦠 HappyBiome AI")
+st.caption("Ask natural-language questions about your microbiome modifier evidence corpus.")
+
+AVATARS = {"user": "🧑‍🔬", "assistant": "🦠"}
 
 
 def check_password():
-    """Tiny shared-password gate. If APP_PASSWORD isn't set, the gate is bypassed."""
     expected = get_secret("APP_PASSWORD")
     if not expected:
         return True
@@ -392,19 +388,23 @@ if not api_key:
 
 client = Anthropic(api_key=api_key)
 
-# Sidebar: loaded compounds + example questions
 with st.sidebar:
-    st.header("Loaded compounds")
+    if st.button("New chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+    st.divider()
+
+    st.markdown("### Loaded compounds")
     try:
         dyn = fetch_dynamic_schema()
         for c in dyn["compounds"]:
-            st.write(f"- {c['display_name']}")
+            st.markdown(f"- {c['display_name']}")
     except Exception as e:
         st.error(f"Could not connect to database: {e}")
         st.stop()
 
     st.divider()
-    st.header("Example questions")
+    st.markdown("### Example questions")
     st.caption(
         "- Which compounds increase Akkermansia, and how strong is the evidence?\n"
         "- Compare cranberry and curcumin on Bifidobacterium\n"
@@ -413,16 +413,14 @@ with st.sidebar:
         "- Show me the strongest human-direct findings across all compounds"
     )
 
-# Initialize session state
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # [{role, content, tool_log?}]
+    st.session_state.messages = []
 
-# Render history
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
+    with st.chat_message(msg["role"], avatar=AVATARS.get(msg["role"])):
         st.markdown(msg["content"])
         if msg.get("tool_log"):
-            with st.expander(f"queries ({len(msg['tool_log'])})", expanded=False):
+            with st.expander(f"queries ({len(msg['tool_log'])}) — full results", expanded=False):
                 for i, t in enumerate(msg["tool_log"], 1):
                     st.markdown(f"**Query {i}**")
                     st.code(t["input"].get("query", ""), language="sql")
@@ -433,19 +431,17 @@ for msg in st.session_state.messages:
                         if t["result"]["rows"]:
                             st.dataframe(t["result"]["rows"], use_container_width=True)
 
-# Chat input
-if prompt := st.chat_input("Ask about the microbiome data..."):
+if prompt := st.chat_input("Ask HappyBiome AI..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=AVATARS["user"]):
         st.markdown(prompt)
 
-    # Build prior history for the API (strip the just-added user msg, the agent adds it back)
     history = []
     for m in st.session_state.messages[:-1]:
         if m["role"] in ("user", "assistant"):
             history.append({"role": m["role"], "content": m["content"]})
 
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=AVATARS["assistant"]):
         status_widget = st.status("Thinking...", expanded=True)
         answer_slot = st.empty()
         tool_log = []
@@ -462,7 +458,7 @@ if prompt := st.chat_input("Ask about the microbiome data..."):
             status_widget.update(label="Failed", state="error", expanded=True)
 
         if tool_log:
-            with st.expander(f"queries ({len(tool_log)}) — full results", expanded=False):
+            with st.expander(f"queries ({len(tool_log)}) - full results", expanded=False):
                 for i, t in enumerate(tool_log, 1):
                     st.markdown(f"**Query {i}**")
                     st.code(t["input"].get("query", ""), language="sql")

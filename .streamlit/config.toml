@@ -1,0 +1,14 @@
+# Streamlit theme — HappyBiome palette pulled from the brand mockup.
+# Edit any value and the app re-themes on next load.
+# https://docs.streamlit.io/develop/concepts/configuration/theming
+
+[theme]
+base = "light"
+primaryColor = "#7C3AED"               # HappyBiome purple — links, buttons, focus rings
+backgroundColor = "#FBFAFF"            # very faint lavender main background
+secondaryBackgroundColor = "#F0EAFB"   # sidebar + chat input
+textColor = "#1F1B2D"                  # deep purple-tinted near-black
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"                # hide the "Made with Streamlit" footer for users
