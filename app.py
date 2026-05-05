@@ -352,7 +352,6 @@ def run_agent(client, system_prompt, history, user_message, tool_log,
 
 st.set_page_config(
     page_title="HappyBiome AI",
-    page_icon="🦠",
     layout="wide",
 )
 st.title("🦠 HappyBiome AI")
