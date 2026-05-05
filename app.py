@@ -354,10 +354,9 @@ st.set_page_config(
     page_title="HappyBiome AI",
     layout="wide",
 )
-st.title("🦠 HappyBiome AI")
+st.title("HappyBiome AI")
 st.caption("Ask natural-language questions about your microbiome modifier evidence corpus.")
 
-AVATARS = {"user": "🧑‍🔬", "assistant": "🦠"}
 
 
 def check_password():
@@ -416,7 +415,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"], avatar=AVATARS.get(msg["role"])):
+    with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg.get("tool_log"):
             with st.expander(f"queries ({len(msg['tool_log'])}) — full results", expanded=False):
@@ -432,7 +431,7 @@ for msg in st.session_state.messages:
 
 if prompt := st.chat_input("Ask HappyBiome AI..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user", avatar=AVATARS["user"]):
+    with st.chat_message("user"):
         st.markdown(prompt)
 
     history = []
@@ -440,7 +439,7 @@ if prompt := st.chat_input("Ask HappyBiome AI..."):
         if m["role"] in ("user", "assistant"):
             history.append({"role": m["role"], "content": m["content"]})
 
-    with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+    with st.chat_message("assistant"):
         status_widget = st.status("Thinking...", expanded=True)
         answer_slot = st.empty()
         tool_log = []
